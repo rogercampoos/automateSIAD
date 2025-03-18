@@ -1,0 +1,88 @@
+import time
+import pandas as pd
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+
+# Configuração do Selenium
+def setup_driver():
+    # Configuração do driver (adicione o caminho para o seu chromedriver)
+    driver_path = 'caminho/para/seu/chromedriver'
+    options = webdriver.ChromeOptions()
+    options.add_argument("--start-maximized")
+    driver = webdriver.Chrome(executable_path=driver_path, options=options)
+    return driver
+
+# Função para carregar dados do Excel
+def load_excel_data(file_path):
+    df = pd.read_excel(file_path)
+    return df
+
+# Função para salvar dados no Excel
+def save_to_excel(data, output_path):
+    data.to_excel(output_path, index=False)
+
+# Automação com Selenium
+def automate_site(driver, data):
+    driver.get("https://www.siad.mg.gov.br/jasi-frontend/")  # Abre o site
+    time.sleep(3)  # Espera para garantir que o site carregue
+
+    results = []
+
+    for index, row in data.iterrows():
+        # Aqui você deve ajustar os campos e XPath de acordo com o site
+        # Exemplo: Preencher campos no site
+        input_field_xpath = 'XPATH_DO_CAMPO'
+        search_button_xpath = 'XPATH_DO_BOTAO'
+
+        # Localizar o campo de entrada e inserir o dado da planilha
+        input_field = driver.find_element(By.XPATH, input_field_xpath)
+        input_field.clear()
+        input_field.send_keys(row['Coluna'])  # Ajuste o nome da coluna
+        
+        # Clicar no botão de busca
+        search_button = driver.find_element(By.XPATH, search_button_xpath)
+        search_button.click()
+        
+        # Aguardar a resposta do site
+        time.sleep(5)
+
+        # Extrair informações do resultado
+        result_xpath = 'XPATH_DO_RESULTADO'
+        try:
+            result = driver.find_element(By.XPATH, result_xpath).text
+        except:
+            result = "Não encontrado"
+        
+        # Armazenar o resultado
+        results.append(result)
+
+    return results
+
+# Fluxo principal
+def main():
+    # Caminho do arquivo Excel
+    input_excel = 'dados_input.xlsx'
+    output_excel = 'dados_output.xlsx'
+
+    # Carregar dados da planilha
+    data = load_excel_data(input_excel)
+
+    # Configurar o driver
+    driver = setup_driver()
+
+    try:
+        # Executar a automação
+        results = automate_site(driver, data)
+        
+        # Adicionar os resultados aos dados originais
+        data['Resultados'] = results
+        
+        # Salvar os resultados no Excel
+        save_to_excel(data, output_excel)
+        print(f"Dados salvos em: {output_excel}")
+    finally:
+        driver.quit()
+
+if __name__ == "__main__":
+    main()
