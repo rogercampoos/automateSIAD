@@ -2,6 +2,7 @@ import pandas as pd
 import logging
 import time
 from typing import List
+import openpyxl # Necessário para manipulação de arquivos .xlsx
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -64,7 +65,7 @@ class SIADAutomation:
             'input_usuario': "//input[@placeholder='Usuário']",
             'input_senha': "//input[@placeholder='Senha']",
             'btn_entrar': "//button[normalize-space(text())='Entrar']",
-            'input_digite_unidade': "//input[@placeholder='Digite a Unidade']",
+            'input_digite_unidade': "//input[@placeholder='Digite a Unidade']", # Revertendo para o seletor original (placeholder)
             'btn_selecionar': "//button[normalize-space(text())='Selecionar']",
             'menu_principal_icon': "//div[contains(@class, 'menuicon ibars')]", # Corrigido para div, usando contains para maior robustez
             'menu_item_relatorios': "//span[normalize-space(text())='Relatórios']",
@@ -78,6 +79,9 @@ class SIADAutomation:
             'menu_usuario_icon': "//i[@class='fas fa-user-circle']", # Ícone do menu de usuário (canto superior direito)
             'menu_item_alterar_unidade': "//span[normalize-space(text())='Alterar Unidade']",
             'btn_alterar': "//button[normalize-space(text())='Alterar']",
+            # Novos seletores para tratamento de erro (Unidade sem acesso)
+            'error_unidade_nao_autorizada': "//span[contains(translate(., 'abcdefghijklmnopqrstuvwxyz', 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'), 'NAO EXISTE PERFIL AUTORIZADO')]",
+            'btn_sair_modal_erro': "//button[normalize-space(text())='SAIR']",
         }
 
     def wait_and_interact(self, xpath_key: str, interaction_type: str = 'click', 
@@ -111,9 +115,17 @@ class SIADAutomation:
                 element.click()
                 self.logger.info(f"Clicou em: {xpath_key} ({xpath})")
             elif interaction_type == 'send_keys':
-                element.clear()
-                element.send_keys(input_text)
-                self.logger.info(f"Digitou '{input_text}' em: {xpath_key} ({xpath})")
+                try:
+                    # Tenta a digitação normal
+                    element.clear()
+                    element.send_keys(input_text)
+                    self.logger.info(f"Digitou '{input_text}' em: {xpath_key} ({xpath})")
+                except Exception as e:
+                    self.logger.warning(f"Falha na digitação normal ({e}). Tentando forçar via JavaScript...")
+                    # Fallback: Força a digitação via JavaScript
+                    script_send = f"arguments[0].value = '{input_text}'; arguments[0].dispatchEvent(new Event('change'));"
+                    self.driver.execute_script(script_send, element)
+                    self.logger.info(f"Digitou '{input_text}' em: {xpath_key} via JS.")
             
             return element
 
@@ -150,7 +162,14 @@ class SIADAutomation:
         script_click = f"document.evaluate(\"{xpath_button}\", document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue.click();"
         self.driver.execute_script(script_click)
         self.logger.info("Botão 'Selecionar' clicado via TAB e JS.")
-        self.logger.info(f"Unidade inicial {unit_code} selecionada.")
+        
+        # 4. TRATAMENTO DE ERRO: Verificar se o modal de erro de não autorizado apareceu
+        if self.handle_unit_error(unit_code):
+            # Se o erro foi tratado, a unidade foi pulada e o método deve retornar
+            return 
+            
+        # Se chegou aqui, a seleção foi bem-sucedida
+        self.logger.info(f"Unidade inicial {unit_code} selecionada com sucesso.")
 
     def generate_inventory_report(self, unit_code: str):
         """Navigate and generate the inventory report for a single unit"""
@@ -193,7 +212,7 @@ class SIADAutomation:
         self.wait_and_interact('btn_ok')
         
         self.logger.info(f"Solicitação de geração de relatório para {unit_code} concluída.")
-        time.sleep(5) # Pausa para garantir que a solicitação foi processada antes de mudar de unidade
+        time.sleep(2) # Pausa para garantir que a solicitação foi processada antes de mudar de unidade
 
     def change_unit_and_loop(self, unit_code: str):
         """Change the current unit to the next one in the loop"""
@@ -214,8 +233,66 @@ class SIADAutomation:
         # 5. Clicar em "Alterar" (Este botão deve aparecer no modal após digitar a unidade)
         self.wait_and_interact('btn_alterar')
         
+        # 6. TRATAMENTO DE ERRO: Verificar se o modal de erro de não autorizado apareceu
+        if self.handle_unit_error(unit_code):
+            # Se o erro foi tratado, a unidade foi pulada e o método deve retornar
+            return 
+            
         self.logger.info(f"Unidade alterada com sucesso para: {unit_code}")
         time.sleep(2)
+
+    def write_unauthorized_unit(self, unit_code: str):
+        """Writes the unauthorized unit code to the designated Excel file."""
+        unauthorized_file = 'C:/Users/p0134255/Documents/Rogério/Backup/Tj/Projetos/Phyton/Automação-SIAD/unidades_sem_acesso.xlsx'
+        
+        try:
+            # Tenta ler o arquivo existente
+            try:
+                df = pd.read_excel(unauthorized_file, engine='openpyxl')
+            except FileNotFoundError:
+                df = pd.DataFrame(columns=['Unidade', 'Data_Registro', 'Motivo'])
+            
+            # Adiciona a nova unidade
+            new_row = pd.DataFrame({
+                'Unidade': [unit_code],
+                'Data_Registro': [pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')],
+                'Motivo': ['NAO EXISTE PERFIL AUTORIZADO']
+            })
+            
+            df = pd.concat([df, new_row], ignore_index=True)
+            
+            # Salva o DataFrame de volta no arquivo
+            df.to_excel(unauthorized_file, index=False, engine='openpyxl')
+            self.logger.warning(f"Unidade não autorizada {unit_code} registrada em {unauthorized_file}")
+            
+        except Exception as e:
+            self.logger.error(f"ERRO FATAL ao escrever unidade não autorizada {unit_code} no Excel: {e}")
+
+    def handle_unit_error(self, unit_code: str):
+        """
+        Checks for the 'unauthorized unit' error modal.
+        If found, logs the unit, writes to Excel, and returns True to skip the unit.
+        
+        :param unit_code: The unit that failed to be selected.
+        :return: True if error was handled (unit skipped), False otherwise.
+        """
+        try:
+            # Verifica se o elemento de erro está presente (espera curta)
+            WebDriverWait(self.driver, 2).until(
+                EC.presence_of_element_located((By.XPATH, self.XPATHS['error_unidade_nao_autorizada']))
+            )
+            
+            self.logger.warning(f"Erro de acesso detectado para a unidade: {unit_code}. A unidade será registrada e pulada.")
+            
+            # 1. Registrar a unidade no arquivo Excel
+            self.write_unauthorized_unit(unit_code)
+            
+            # 2. O modal de erro permanece aberto. A próxima iteração do loop irá sobrescrever o campo.
+            return True # Erro tratado
+            
+        except:
+            # O elemento de erro não apareceu dentro do timeout de 5 segundos
+            return False # Nenhum erro detectado
 
     def execute_automation(self):
         """
