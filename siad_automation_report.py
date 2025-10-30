@@ -70,7 +70,8 @@ class SIADAutomation:
             'menu_item_relatorios': "//span[normalize-space(text())='Relatórios']",
             'menu_item_inventario': "//span[normalize-space(text())='Relatório de inventário de bens']",
             'btn_pesquisar': "//button[normalize-space(text())='Pesquisar']",
-            'relatorio_link': "//span[text()='INVENTARIO DE PATRIMONIOS']", # Link/Linha do relatório gerado
+            'relatorio_link': "//div[normalize-space(text())='INVENTARIO DE PATRIMONIOS']", # Link/Linha do relatório gerado (Corrigido para DIV)
+            'input_unidade_tarefa': "//span[contains(text(), 'UNID. ADMINISTRATIVA')]/following-sibling::div[1]//input", # Corrigido para usar contains() para maior robustez
             'input_unidade_relatorio': "//span[normalize-space(text())='Unidade emitente:']/following-sibling::input", # Corrigido para usar o rótulo fixo 'Unidade emitente:'
             'btn_solicitar_geracao': "//button[normalize-space(text())='Solicitar geração']",
             'btn_ok': "//button[normalize-space(text())='OK']", # Botão OK em caixas de diálogo
@@ -182,7 +183,10 @@ class SIADAutomation:
         
         self.logger.info("Relatório selecionado.")
         
-        # 5. Clicar em "Solicitar geração"
+        # 5. Inserir a unidade no campo obrigatório da tarefa
+        self.wait_and_interact('input_unidade_tarefa', 'send_keys', unit_code)
+        
+        # 6. Clicar em "Solicitar geração"
         self.wait_and_interact('btn_solicitar_geracao')
         
         # 6. Clicar em "OK" na caixa de diálogo de confirmação
